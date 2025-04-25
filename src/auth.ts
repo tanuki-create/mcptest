@@ -4,13 +4,18 @@ import process from 'process';
 import { authenticate } from '@google-cloud/local-auth';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
+import 'dotenv/config'; // Ensure environment variables are loaded
 
 const SCOPES = [
   'https://www.googleapis.com/auth/documents',
   'https://www.googleapis.com/auth/calendar'
 ];
 const TOKEN_PATH = path.join(process.cwd(), 'token.json');
-const CREDENTIALS_PATH = path.join(process.cwd(), 'client_secret_422208870387-11n44i2chevck7d1fba4bu6qeuhaluq7.apps.googleusercontent.com.json'); // Adjust filename if needed
+const credentialsPathFromEnv = process.env.GOOGLE_CREDENTIALS_PATH;
+if (!credentialsPathFromEnv) {
+  throw new Error('The GOOGLE_CREDENTIALS_PATH environment variable is not set. Please set it in your .env file.');
+}
+const CREDENTIALS_PATH = path.resolve(process.cwd(), credentialsPathFromEnv); // Use path.resolve for absolute path
 
 /**
  * Reads previously authorized credentials from the save file.

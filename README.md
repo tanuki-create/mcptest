@@ -55,27 +55,29 @@
     npm install
     ```
 
-3.  **Google OAuth クライアントシークレットの配置:**
-    *   Google Cloud Console からダウンロードした OAuth 2.0 クライアント ID の JSON ファイルを、プロジェクトのルートディレクトリに配置します。
-    *   ファイル名を `client_secret_xxxxxxxx.apps.googleusercontent.com.json` の形式に合わせてください（もし違う場合は `src/auth.ts` 内の `CREDENTIALS_PATH` 定数を修正してください）。
-    *   **注意:** このファイルは機密情報です。`.gitignore` に含まれていることを確認し、Git リポジトリにコミットしないでください。
-
-4.  **環境変数の設定:**
+3.  **環境変数の設定:**
     *   プロジェクトのルートディレクトリに `.env` という名前のファイルを作成します。
-    *   以下の内容を記述し、取得した Gemini API キーを設定します。
+    *   Google Cloud Console からダウンロードした OAuth 2.0 クライアント ID の JSON ファイルを、プロジェクトのルートディレクトリに配置します。ファイル名は任意ですが、後で `.env` ファイルに指定します。
+    *   `.env` ファイルに以下の内容を記述し、取得した Gemini API キーと、配置したクライアントシークレットファイルの **ファイル名** を設定します。
         ```dotenv
+        # Gemini API Key
         GEMINI_API_KEY=YOUR_GEMINI_API_KEY
-        ```
-    *   **注意:** `.env` ファイルも機密情報です。`.gitignore` に含まれていることを確認し、Git リポジトリにコミットしないでください。
 
-5.  **ビルド:**
+        # Path to your Google Cloud OAuth 2.0 Client ID file (relative to project root)
+        # Replace 'client_secret_xxxxxxxx.apps.googleusercontent.com.json'
+        # with the actual filename of the JSON key file you downloaded and placed in the root.
+        GOOGLE_CREDENTIALS_PATH=client_secret_xxxxxxxx.apps.googleusercontent.com.json
+        ```
+    *   **注意:** `.env` ファイルおよびクライアントシークレットの JSON ファイルは機密情報です。`.gitignore` に `.env` と `*.json` (または具体的なファイル名パターン) が含まれていることを確認し、Git リポジトリにコミットしないでください。
+
+4.  **ビルド:**
     *   TypeScript コードを JavaScript にコンパイルします。
         ```bash
         npm run build
         ```
     *   これにより `dist` ディレクトリに必要なファイルが生成されます。
 
-6.  **初回 Google 認証:**
+5.  **初回 Google 認証:**
     *   初めてクライアントを実行する際、Google Docs および Calendar へのアクセス許可を求める認証フローが開始されます。
     *   サーバー（クライアント内部で起動）のコンソールに認証用 URL が表示されるので、ブラウザで開き、指示に従って Google アカウントでログインし、アクセスを許可してください。
     *   **重要:** アプリが Google の審査を受けていないため、「確認されていないアプリ」という警告が表示される場合があります。アクセスを許可するには、ご自身の Google アカウントを Google Cloud Console の「OAuth 同意画面」->「テストユーザー」に追加する必要があります。（詳細は [Google Cloud ドキュメント](https://developers.google.com/identity/protocols/oauth2/web-server#handlingresponse) 等を参照）
@@ -132,7 +134,7 @@
 
 ## 注意点
 
--   **API キー等の管理:** `client_secret_....json` ファイルと `.env` ファイルは絶対に公開しないでください。
+-   **API キー・認証情報ファイルの管理:** `.env` ファイルおよび Google Cloud からダウンロードしたクライアントシークレットの JSON ファイル (`.json`) は絶対に公開しないでください。`.gitignore` で適切に除外してください。
 -   **Google 認証:** 初回認証フローとテストユーザー登録が必要です。
 -   **エラーハンドリング:** API のレート制限や予期せぬエラーが発生する可能性があります。エラーメッセージを確認し、必要に応じて時間をおいて再試行してください。
 -   **進捗通知:** 現在、サーバーからクライアントへのリアルタイム進捗通知機能は実装されていません（コードはコメントアウトされています）。 
