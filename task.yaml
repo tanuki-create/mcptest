@@ -1,0 +1,23 @@
+tasks:
+  - "[x] プロジェクトリポジトリ作成と初期設定（TypeScript SDK インストール、Lint/Formatter 設定）"
+  - "[x] Google Cloud プロジェクト作成および OAuth 2.0 クライアント設定（Docs・Calendar スコープ取得） ※要手動確認: API有効化とスコープ設定"
+  - "[x] MCP サーバー基盤実装準備（@modelcontextprotocol/sdk インポート、StdioTransport／SSETransport 設定）"
+  - "[x] ツール定義作成: plan_and_schedule（inputSchema 設計、name/description 設定）"
+  - "[x] LLM プロンプト作成: タスク分割＋所要時間見積もり用プロンプト設計"
+  - "[x] LLM (Gemini API) ハンドラ実装（tools/call ハンドラ内で API 呼び出し＋JSON パース）"
+  - "[x] Google Docs API 連携実装: documents.create → batchUpdate でサブタスクリスト生成"
+  - "[x] Google Calendar API 連携実装: freeBusy.query で空き時間取得 → events.insert でスケジュール登録"
+  - "[x] スケジューリングロジック実装: Earliest-Fit＋バッファ挿入＋優先度ソート"
+  - "[x] エラー／例外処理実装: OAuth 再認証誘導、API 限度オーバー対応、MCP エラーコード返却"
+  - "[x] MCP resources/add で Docs URL を公開（オプション）"
+  - "[ ] MCP notifications/progress 実装: 各ステップ進捗通知の設計・送信 ※要調査: sendNotification の正しい使い方"
+  - "[x] クライアント UI 設計: タスク入力画面、OAuth 同意フロー、進捗表示、結果確認画面"
+  - "[x] クライアント実装: tools.list → tools.call(plan_and_schedule) 呼び出し処理"
+  - "[ ] クライアントでの結果表示: Docs リンク表示＋カレンダーイベント描画／リンク"
+  - "[ ] 単体テスト作成: LLM モック、Docs/Calendar API モックによる各機能テスト"
+  - "[ ] E2E テスト作成: Claude Desktop（またはサンプルホスト）連携テスト"
+  - "[ ] デプロイ準備: 環境変数管理、Dockerfile 作成、CI/CD パイプライン設定"
+  - "[ ] ドキュメント整備: README（セットアップ／実行手順）、API リファレンス、サンプルプロンプト"
+  - "[ ] MVP リリースおよびユーザーフィードバック収集"
+
+  

@@ -1,0 +1,908 @@
+Skip to content
+Navigation Menu
+modelcontextprotocol
+typescript-sdk
+
+Type / to search
+Code
+Issues
+125
+Pull requests
+39
+Actions
+Projects
+Security
+Insights
+Owner avatar
+typescript-sdk
+Public
+modelcontextprotocol/typescript-sdk
+Go to file
+t
+Name		
+ihrpr
+ihrpr
+Merge pull request #384 from simonedstrom96/patch-1
+1317767
+ · 
+2 days ago
+.github/workflows
+#89 NPM provenance added
+last month
+src
+fix sse examples
+2 days ago
+.gitattributes
+Ignore package-lock.json in diffs
+6 months ago
+.gitignore
+Don't commit 'dist' anymore
+6 months ago
+.npmrc
+Add npmrc to always point to npm for public packages
+6 months ago
+CLAUDE.md
+Add CLAUDE.md with SDK development guide
+2 months ago
+CODE_OF_CONDUCT.md
+Add code of conduct
+5 months ago
+CONTRIBUTING.md
+Add CONTRIBUTING.md
+5 months ago
+LICENSE
+Update LICENSE
+5 months ago
+README.md
+Update README.md to include working examples
+3 days ago
+SECURITY.md
+Update SECURITY.md
+5 months ago
+eslint.config.mjs
+Initial import
+7 months ago
+jest.config.js
+Revert "feat: support extending McpServer with authorization"
+3 weeks ago
+package-lock.json
+Bump version, npm audit fix
+3 weeks ago
+package.json
+bump version
+3 days ago
+tsconfig.cjs.json
+Fix tests
+2 months ago
+tsconfig.json
+Bump up to 5.0.0
+3 weeks ago
+tsconfig.prod.json
+Fix tests
+2 months ago
+Repository files navigation
+README
+Code of conduct
+MIT license
+Security
+MCP TypeScript SDK NPM Version MIT licensed
+Table of Contents
+Overview
+Installation
+Quickstart
+What is MCP?
+Core Concepts
+Server
+Resources
+Tools
+Prompts
+Running Your Server
+stdio
+Streamable HTTP
+Testing and Debugging
+Examples
+Echo Server
+SQLite Explorer
+Advanced Usage
+Low-Level Server
+Writing MCP Clients
+Server Capabilities
+Proxy OAuth Server
+Backwards Compatibility
+Overview
+The Model Context Protocol allows applications to provide context for LLMs in a standardized way, separating the concerns of providing context from the actual LLM interaction. This TypeScript SDK implements the full MCP specification, making it easy to:
+
+Build MCP clients that can connect to any MCP server
+Create MCP servers that expose resources, prompts and tools
+Use standard transports like stdio and Streamable HTTP
+Handle all MCP protocol messages and lifecycle events
+Installation
+npm install @modelcontextprotocol/sdk
+Quick Start
+Let's create a simple MCP server that exposes a calculator tool and some data:
+
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+
+// Create an MCP server
+const server = new McpServer({
+  name: "Demo",
+  version: "1.0.0"
+});
+
+// Add an addition tool
+server.tool("add",
+  { a: z.number(), b: z.number() },
+  async ({ a, b }) => ({
+    content: [{ type: "text", text: String(a + b) }]
+  })
+);
+
+// Add a dynamic greeting resource
+server.resource(
+  "greeting",
+  new ResourceTemplate("greeting://{name}", { list: undefined }),
+  async (uri, { name }) => ({
+    contents: [{
+      uri: uri.href,
+      text: `Hello, ${name}!`
+    }]
+  })
+);
+
+// Start receiving messages on stdin and sending messages on stdout
+const transport = new StdioServerTransport();
+await server.connect(transport);
+What is MCP?
+The Model Context Protocol (MCP) lets you build servers that expose data and functionality to LLM applications in a secure, standardized way. Think of it like a web API, but specifically designed for LLM interactions. MCP servers can:
+
+Expose data through Resources (think of these sort of like GET endpoints; they are used to load information into the LLM's context)
+Provide functionality through Tools (sort of like POST endpoints; they are used to execute code or otherwise produce a side effect)
+Define interaction patterns through Prompts (reusable templates for LLM interactions)
+And more!
+Core Concepts
+Server
+The McpServer is your core interface to the MCP protocol. It handles connection management, protocol compliance, and message routing:
+
+const server = new McpServer({
+  name: "My App",
+  version: "1.0.0"
+});
+Resources
+Resources are how you expose data to LLMs. They're similar to GET endpoints in a REST API - they provide data but shouldn't perform significant computation or have side effects:
+
+// Static resource
+server.resource(
+  "config",
+  "config://app",
+  async (uri) => ({
+    contents: [{
+      uri: uri.href,
+      text: "App configuration here"
+    }]
+  })
+);
+
+// Dynamic resource with parameters
+server.resource(
+  "user-profile",
+  new ResourceTemplate("users://{userId}/profile", { list: undefined }),
+  async (uri, { userId }) => ({
+    contents: [{
+      uri: uri.href,
+      text: `Profile data for user ${userId}`
+    }]
+  })
+);
+Tools
+Tools let LLMs take actions through your server. Unlike resources, tools are expected to perform computation and have side effects:
+
+// Simple tool with parameters
+server.tool(
+  "calculate-bmi",
+  {
+    weightKg: z.number(),
+    heightM: z.number()
+  },
+  async ({ weightKg, heightM }) => ({
+    content: [{
+      type: "text",
+      text: String(weightKg / (heightM * heightM))
+    }]
+  })
+);
+
+// Async tool with external API call
+server.tool(
+  "fetch-weather",
+  { city: z.string() },
+  async ({ city }) => {
+    const response = await fetch(`https://api.weather.com/${city}`);
+    const data = await response.text();
+    return {
+      content: [{ type: "text", text: data }]
+    };
+  }
+);
+Prompts
+Prompts are reusable templates that help LLMs interact with your server effectively:
+
+server.prompt(
+  "review-code",
+  { code: z.string() },
+  ({ code }) => ({
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: `Please review this code:\n\n${code}`
+      }
+    }]
+  })
+);
+Running Your Server
+MCP servers in TypeScript need to be connected to a transport to communicate with clients. How you start the server depends on the choice of transport:
+
+stdio
+For command-line tools and direct integrations:
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+const server = new McpServer({
+  name: "example-server",
+  version: "1.0.0"
+});
+
+// ... set up server resources, tools, and prompts ...
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+Streamable HTTP
+For remote servers, set up a Streamable HTTP transport that handles both client requests and server-to-client notifications.
+
+With Session Management
+In some cases, servers need to be stateful. This is achieved by session management.
+
+import express from "express";
+import { randomUUID } from "node:crypto";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js"
+
+
+
+const app = express();
+app.use(express.json());
+
+// Map to store transports by session ID
+const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+
+// Handle POST requests for client-to-server communication
+app.post('/mcp', async (req, res) => {
+  // Check for existing session ID
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  let transport: StreamableHTTPServerTransport;
+
+  if (sessionId && transports[sessionId]) {
+    // Reuse existing transport
+    transport = transports[sessionId];
+  } else if (!sessionId && isInitializeRequest(req.body)) {
+    // New initialization request
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        // Store the transport by session ID
+        transports[sessionId] = transport;
+      }
+    });
+
+    // Clean up transport when closed
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        delete transports[transport.sessionId];
+      }
+    };
+    const server = new McpServer({
+      name: "example-server",
+      version: "1.0.0"
+    });
+
+    // ... set up server resources, tools, and prompts ...
+
+    // Connect to the MCP server
+    await server.connect(transport);
+  } else {
+    // Invalid request
+    res.status(400).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32000,
+        message: 'Bad Request: No valid session ID provided',
+      },
+      id: null,
+    });
+    return;
+  }
+
+  // Handle the request
+  await transport.handleRequest(req, res, req.body);
+});
+
+// Reusable handler for GET and DELETE requests
+const handleSessionRequest = async (req: express.Request, res: express.Response) => {
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  if (!sessionId || !transports[sessionId]) {
+    res.status(400).send('Invalid or missing session ID');
+    return;
+  }
+  
+  const transport = transports[sessionId];
+  await transport.handleRequest(req, res);
+};
+
+// Handle GET requests for server-to-client notifications via SSE
+app.get('/mcp', handleSessionRequest);
+
+// Handle DELETE requests for session termination
+app.delete('/mcp', handleSessionRequest);
+
+app.listen(3000);
+Without Session Management (Stateless)
+For simpler use cases where session management isn't needed:
+
+const app = express();
+app.use(express.json());
+
+app.post('/mcp', async (req: Request, res: Response) => {
+  // In stateless mode, create a new instance of transport and server for each request
+  // to ensure complete isolation. A single instance would cause request ID collisions
+  // when multiple clients connect concurrently.
+  
+  try {
+    const server = getServer(); 
+    const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+    res.on('close', () => {
+      console.log('Request closed');
+      transport.close();
+      server.close();
+    });
+  } catch (error) {
+    console.error('Error handling MCP request:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Internal server error',
+        },
+        id: null,
+      });
+    }
+  }
+});
+
+app.get('/mcp', async (req: Request, res: Response) => {
+  console.log('Received GET MCP request');
+  res.writeHead(405).end(JSON.stringify({
+    jsonrpc: "2.0",
+    error: {
+      code: -32000,
+      message: "Method not allowed."
+    },
+    id: null
+  }));
+});
+
+app.delete('/mcp', async (req: Request, res: Response) => {
+  console.log('Received DELETE MCP request');
+  res.writeHead(405).end(JSON.stringify({
+    jsonrpc: "2.0",
+    error: {
+      code: -32000,
+      message: "Method not allowed."
+    },
+    id: null
+  }));
+});
+
+
+// Start the server
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`MCP Stateless Streamable HTTP Server listening on port ${PORT}`);
+});
+This stateless approach is useful for:
+
+Simple API wrappers
+RESTful scenarios where each request is independent
+Horizontally scaled deployments without shared session state
+Testing and Debugging
+To test your server, you can use the MCP Inspector. See its README for more information.
+
+Examples
+Echo Server
+A simple server demonstrating resources, tools, and prompts:
+
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+const server = new McpServer({
+  name: "Echo",
+  version: "1.0.0"
+});
+
+server.resource(
+  "echo",
+  new ResourceTemplate("echo://{message}", { list: undefined }),
+  async (uri, { message }) => ({
+    contents: [{
+      uri: uri.href,
+      text: `Resource echo: ${message}`
+    }]
+  })
+);
+
+server.tool(
+  "echo",
+  { message: z.string() },
+  async ({ message }) => ({
+    content: [{ type: "text", text: `Tool echo: ${message}` }]
+  })
+);
+
+server.prompt(
+  "echo",
+  { message: z.string() },
+  ({ message }) => ({
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: `Please process this message: ${message}`
+      }
+    }]
+  })
+);
+SQLite Explorer
+A more complex example showing database integration:
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import sqlite3 from "sqlite3";
+import { promisify } from "util";
+import { z } from "zod";
+
+const server = new McpServer({
+  name: "SQLite Explorer",
+  version: "1.0.0"
+});
+
+// Helper to create DB connection
+const getDb = () => {
+  const db = new sqlite3.Database("database.db");
+  return {
+    all: promisify<string, any[]>(db.all.bind(db)),
+    close: promisify(db.close.bind(db))
+  };
+};
+
+server.resource(
+  "schema",
+  "schema://main",
+  async (uri) => {
+    const db = getDb();
+    try {
+      const tables = await db.all(
+        "SELECT sql FROM sqlite_master WHERE type='table'"
+      );
+      return {
+        contents: [{
+          uri: uri.href,
+          text: tables.map((t: {sql: string}) => t.sql).join("\n")
+        }]
+      };
+    } finally {
+      await db.close();
+    }
+  }
+);
+
+server.tool(
+  "query",
+  { sql: z.string() },
+  async ({ sql }) => {
+    const db = getDb();
+    try {
+      const results = await db.all(sql);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(results, null, 2)
+        }]
+      };
+    } catch (err: unknown) {
+      const error = err as Error;
+      return {
+        content: [{
+          type: "text",
+          text: `Error: ${error.message}`
+        }],
+        isError: true
+      };
+    } finally {
+      await db.close();
+    }
+  }
+);
+Advanced Usage
+Dynamic Servers
+If you want to offer an initial set of tools/prompts/resources, but later add additional ones based on user action or external state change, you can add/update/remove them after the Server is connected. This will automatically emit the corresponding listChanged notificaions:
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+const server = new McpServer({
+  name: "Dynamic Example",
+  version: "1.0.0"
+});
+
+const listMessageTool = server.tool(
+  "listMessages",
+  { channel: z.string() },
+  async ({ channel }) => ({
+    content: [{ type: "text", text: await listMessages(channel) }]
+  })
+);
+
+const putMessageTool = server.tool(
+  "putMessage",
+  { channel: z.string(), message: z.string() },
+  async ({ channel, message }) => ({
+    content: [{ type: "text", text: await putMessage(channel, string) }]
+  })
+);
+// Until we upgrade auth, `putMessage` is disabled (won't show up in listTools)
+putMessageTool.disable()
+
+const upgradeAuthTool = server.tool(
+  "upgradeAuth",
+  { permission: z.enum(["write', vadmin"])},
+  // Any mutations here will automatically emit `listChanged` notifications
+  async ({ permission }) => {
+    const { ok, err, previous } = await upgradeAuthAndStoreToken(permission)
+    if (!ok) return {content: [{ type: "text", text: `Error: ${err}` }]}
+
+    // If we previously had read-only access, 'putMessage' is now available
+    if (previous === "read") {
+      putMessageTool.enable()
+    }
+
+    if (permission === 'write') {
+      // If we've just upgraded to 'write' permissions, we can still call 'upgradeAuth' 
+      // but can only upgrade to 'admin'. 
+      upgradeAuthTool.update({
+        paramSchema: { permission: z.enum(["admin"]) }, // change validation rules
+      })
+    } else {
+      // If we're now an admin, we no longer have anywhere to upgrade to, so fully remove that tool
+      upgradeAuthTool.remove()
+    }
+  }
+)
+
+// Connect as normal
+const transport = new StdioServerTransport();
+await server.connect(transport);
+Low-Level Server
+For more control, you can use the low-level Server class directly:
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema
+} from "@modelcontextprotocol/sdk/types.js";
+
+const server = new Server(
+  {
+    name: "example-server",
+    version: "1.0.0"
+  },
+  {
+    capabilities: {
+      prompts: {}
+    }
+  }
+);
+
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  return {
+    prompts: [{
+      name: "example-prompt",
+      description: "An example prompt template",
+      arguments: [{
+        name: "arg1",
+        description: "Example argument",
+        required: true
+      }]
+    }]
+  };
+});
+
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  if (request.params.name !== "example-prompt") {
+    throw new Error("Unknown prompt");
+  }
+  return {
+    description: "Example prompt",
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: "Example prompt text"
+      }
+    }]
+  };
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+Writing MCP Clients
+The SDK provides a high-level client interface:
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+const transport = new StdioClientTransport({
+  command: "node",
+  args: ["server.js"]
+});
+
+const client = new Client(
+  {
+    name: "example-client",
+    version: "1.0.0"
+  }
+);
+
+await client.connect(transport);
+
+// List prompts
+const prompts = await client.listPrompts();
+
+// Get a prompt
+const prompt = await client.getPrompt({
+  name: "example-prompt",
+  arguments: {
+    arg1: "value"
+  }
+});
+
+// List resources
+const resources = await client.listResources();
+
+// Read a resource
+const resource = await client.readResource({
+  uri: "file:///example.txt"
+});
+
+// Call a tool
+const result = await client.callTool({
+  name: "example-tool",
+  arguments: {
+    arg1: "value"
+  }
+});
+Proxy Authorization Requests Upstream
+You can proxy OAuth requests to an external authorization provider:
+
+import express from 'express';
+import { ProxyOAuthServerProvider, mcpAuthRouter } from '@modelcontextprotocol/sdk';
+
+const app = express();
+
+const proxyProvider = new ProxyOAuthServerProvider({
+    endpoints: {
+        authorizationUrl: "https://auth.external.com/oauth2/v1/authorize",
+        tokenUrl: "https://auth.external.com/oauth2/v1/token",
+        revocationUrl: "https://auth.external.com/oauth2/v1/revoke",
+    },
+    verifyAccessToken: async (token) => {
+        return {
+            token,
+            clientId: "123",
+            scopes: ["openid", "email", "profile"],
+        }
+    },
+    getClient: async (client_id) => {
+        return {
+            client_id,
+            redirect_uris: ["http://localhost:3000/callback"],
+        }
+    }
+})
+
+app.use(mcpAuthRouter({
+    provider: proxyProvider,
+    issuerUrl: new URL("http://auth.external.com"),
+    baseUrl: new URL("http://mcp.example.com"),
+    serviceDocumentationUrl: new URL("https://docs.example.com/"),
+}))
+This setup allows you to:
+
+Forward OAuth requests to an external provider
+Add custom token validation logic
+Manage client registrations
+Provide custom documentation URLs
+Maintain control over the OAuth flow while delegating to an external provider
+Backwards Compatibility
+Clients and servers with StreamableHttp tranport can maintain backwards compatibility with the deprecated HTTP+SSE transport (from protocol version 2024-11-05) as follows
+
+Client-Side Compatibility
+For clients that need to work with both Streamable HTTP and older SSE servers:
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+let client: Client|undefined = undefined
+const baseUrl = new URL(url);
+try {
+  client = new Client({
+    name: 'streamable-http-client',
+    version: '1.0.0'
+  });
+  const transport = new StreamableHTTPClientTransport(
+    new URL(baseUrl)
+  );
+  await client.connect(transport);
+  console.log("Connected using Streamable HTTP transport");
+} catch (error) {
+  // If that fails with a 4xx error, try the older SSE transport
+  console.log("Streamable HTTP connection failed, falling back to SSE transport");
+  client = new Client({
+    name: 'sse-client',
+    version: '1.0.0'
+  });
+  const sseTransport = new SSEClientTransport(baseUrl);
+  await client.connect(sseTransport);
+  console.log("Connected using SSE transport");
+}
+Server-Side Compatibility
+For servers that need to support both Streamable HTTP and older clients:
+
+import express from "express";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+
+const server = new McpServer({
+  name: "backwards-compatible-server",
+  version: "1.0.0"
+});
+
+// ... set up server resources, tools, and prompts ...
+
+const app = express();
+app.use(express.json());
+
+// Store transports for each session type
+const transports = {
+  streamable: {} as Record<string, StreamableHTTPServerTransport>,
+  sse: {} as Record<string, SSEServerTransport>
+};
+
+// Modern Streamable HTTP endpoint
+app.all('/mcp', async (req, res) => {
+  // Handle Streamable HTTP transport for modern clients
+  // Implementation as shown in the "With Session Management" example
+  // ...
+});
+
+// Legacy SSE endpoint for older clients
+app.get('/sse', async (req, res) => {
+  // Create SSE transport for legacy clients
+  const transport = new SSEServerTransport('/messages', res);
+  transports.sse[transport.sessionId] = transport;
+  
+  res.on("close", () => {
+    delete transports.sse[transport.sessionId];
+  });
+  
+  await server.connect(transport);
+});
+
+// Legacy message endpoint for older clients
+app.post('/messages', async (req, res) => {
+  const sessionId = req.query.sessionId as string;
+  const transport = transports.sse[sessionId];
+  if (transport) {
+    await transport.handlePostMessage(req, res, req.body);
+  } else {
+    res.status(400).send('No transport found for sessionId');
+  }
+});
+
+app.listen(3000);
+Note: The SSE transport is now deprecated in favor of Streamable HTTP. New implementations should use Streamable HTTP, and existing SSE implementations should plan to migrate.
+
+Documentation
+Model Context Protocol documentation
+MCP Specification
+Example Servers
+Contributing
+Issues and pull requests are welcome on GitHub at https://github.com/modelcontextprotocol/typescript-sdk.
+
+License
+This project is licensed under the MIT License—see the LICENSE file for details.
+
+About
+The official Typescript SDK for Model Context Protocol servers and clients
+
+modelcontextprotocol.io
+Resources
+ Readme
+License
+ MIT license
+Code of conduct
+ Code of conduct
+Security policy
+ Security policy
+ Activity
+ Custom properties
+Stars
+ 5.8k stars
+Watchers
+ 53 watching
+Forks
+ 644 forks
+Report repository
+Releases 31
+1.10.2
+Latest
+3 days ago
++ 30 releases
+Contributors
+47
+@jspahrsummers
+@ihrpr
+@allenzhou101
+@jerome3o-anthropic
+@cliffhall
+@dsp-ant
+@anaisbetts
+@ycjcl868
+@nanbingxyz
+@ashwin-ant
+@wangshijun
+@gylove1994
+@m-paternostro
+@Ozamatash
++ 33 contributors
+Deployments
+27
+ release 3 days ago
++ 26 deployments
+Languages
+TypeScript
+99.9%
+ 
+JavaScript
+0.1%
+Footer
+© 2025 GitHub, Inc.
+Footer navigation
+Terms
+Privacy
+Security
+Status
+Docs
+Contact
+Manage cookies
+Do not share my personal information
+typescript-sdk/src at main · modelcontextprotocol/typescript-sdk
+ 
