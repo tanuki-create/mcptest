@@ -2,6 +2,21 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { Notification } from '@modelcontextprotocol/sdk/types.js'; // Remove ToolResult import
 import process from 'process';
+import readline from 'readline/promises'; // Import readline for user input
+
+// Helper function for user confirmation
+async function askForConfirmation(query: string): Promise<boolean> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = await rl.question(`${query} (Y/n): `);
+    return answer.trim().toLowerCase() !== 'n';
+  } finally {
+    rl.close();
+  }
+}
 
 async function main() {
   // 1. Get task description from command line arguments
@@ -48,49 +63,107 @@ async function main() {
   // Let's assume for now notifications are handled by transport logging or are TBD
   console.log("Notification listener setup is currently placeholder.");
 
-  // 5. Connect to the server
+  let originalTaskDescription = process.argv[2]; // Store original task description
+  let subtasksToSchedule: any[] | null = null; // To store subtasks after planning
+
   try {
     console.log('Connecting to MCP server...');
     await client.connect(transport);
     console.log('Connected successfully.');
 
-    // Optional: List available tools
-    // const tools = await client.listTools();
-    // console.log('Available tools:', tools);
-
-    // 6. Call the plan_and_schedule tool
-    console.log(`Calling tool 'plan_and_schedule'...`);
-    // Remove explicit type annotation for result
-    const result = await client.callTool({
-      name: 'plan_and_schedule',
-      // Wrap arguments in the 'arguments' key as per SDK examples
+    // --- Step 1: Call plan_task --- 
+    console.log(`Calling tool 'plan_task'...`);
+    const planResult = await client.callTool({
+      name: 'plan_task', // Call the renamed tool
       arguments: { 
-        taskDescription: taskDescription 
+        taskDescription: originalTaskDescription 
       },
     });
 
-    // 7. Display the result
-    console.log('\n--- Tool Result ---');
-    if (result.isError) {
-      console.error('Tool execution failed:');
-    } else {
-      console.log('Tool executed successfully:');
-    }
-    // Handle content as unknown array
-    const content = result.content as unknown[]; 
-    content.forEach((item: unknown) => {
-      // Basic type check before accessing properties
-      if (typeof item === 'object' && item !== null && 'type' in item) {
-        if (item.type === 'text' && 'text' in item) {
-           console.log(item.text);
-        } else {
-           console.log(`[${item.type}]:`, item);
-        }
+    console.log('\n--- Planning Result ---');
+    if (planResult.isError) {
+      console.error('Task planning failed:');
+      // Display error content after checking if it's an array
+      if (Array.isArray(planResult.content)) {
+         (planResult.content as any[]).forEach((item: any) => console.log(item?.text || item));
       } else {
-        console.log('[Unknown content item]:', item);
+         console.log('Raw error content:', planResult.content);
       }
+      throw new Error('Planning phase failed'); // Throw to exit via finally block
+    } else if (!Array.isArray(planResult.content) || planResult.content.length === 0) {
+      // Handle cases where content is not an array or is empty
+      console.error('Invalid or empty content received from plan_task:', planResult.content);
+      throw new Error('Invalid response from planning phase');
+    } else {
+      console.log('Subtasks generated successfully:');
+      // Assuming content[0] is the text/json item we expect
+      const contentItem = planResult.content[0] as { type: string; text?: string; json?: any };
+      if (contentItem?.type === 'text' && contentItem.text) {
+        try {
+          subtasksToSchedule = JSON.parse(contentItem.text);
+          // Pretty print the subtasks for review
+          console.log(JSON.stringify(subtasksToSchedule, null, 2)); 
+        } catch (parseError) {
+          console.error('Failed to parse subtasks JSON:', parseError);
+          console.log('Raw response:', contentItem.text);
+          throw new Error('Could not parse subtasks');
+        }
+      } else if (contentItem?.type === 'json') { // Handle if server returns json directly
+         subtasksToSchedule = contentItem.json;
+         console.log(JSON.stringify(subtasksToSchedule, null, 2));
+      } else {
+         console.error('Unexpected content format received from plan_task:', planResult.content);
+         throw new Error('Invalid response from planning phase');
+      }
+    }
+    console.log('----------------------');
+
+    // --- Step 2: User Confirmation --- 
+    if (!subtasksToSchedule || subtasksToSchedule.length === 0) {
+       console.log('No subtasks generated, nothing to schedule.');
+       return; // Exit gracefully
+    }
+
+    const proceed = await askForConfirmation('Do you want to schedule these tasks?');
+
+    if (!proceed) {
+      console.log('Scheduling cancelled by user.');
+      return; // Exit gracefully
+    }
+
+    // --- Step 3: Call schedule_tasks --- 
+    console.log(`\nCalling tool 'schedule_tasks'...`);
+    const scheduleResult = await client.callTool({
+      name: 'schedule_tasks', 
+      arguments: { 
+         taskDescription: originalTaskDescription, // Pass original description
+         subtasks: subtasksToSchedule // Pass the parsed/confirmed subtasks
+       },
     });
-    console.log('-------------------');
+
+    console.log('\n--- Scheduling Result ---');
+    if (scheduleResult.isError) {
+      console.error('Task scheduling failed:');
+    } else {
+      console.log('Task scheduling finished:');
+    }
+    // Display result content after checking if it's an array
+    if (Array.isArray(scheduleResult.content)) {
+       (scheduleResult.content as any[]).forEach((item: unknown) => {
+          if (typeof item === 'object' && item !== null && 'type' in item) {
+            if (item.type === 'text' && 'text' in item) {
+               console.log(item.text);
+            } else {
+               console.log(`[${item.type}]:`, item);
+            }
+          } else {
+            console.log('[Unknown content item]:', item);
+          }
+       });
+    } else {
+       console.log('Raw scheduling result content:', scheduleResult.content);
+    }
+    console.log('-----------------------');
 
   } catch (error: unknown) {
     console.error('\n--- Client Error ---');

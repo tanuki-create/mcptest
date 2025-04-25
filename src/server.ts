@@ -109,9 +109,13 @@ const SubtaskSchema = z.object({
 });
 const SubtaskListSchema = z.array(SubtaskSchema);
 
-// --- Tool Input Schema ---
-const PlanAndScheduleInputSchema = z.object({
+// --- Tool Input Schemas ---
+const PlanInputSchema = z.object({
   taskDescription: z.string().describe("The user's task described in natural language."),
+});
+const ScheduleInputSchema = z.object({
+  taskDescription: z.string(), // Keep original description for context/titles
+  subtasks: SubtaskListSchema, // Pass the validated subtasks
 });
 
 // --- Scheduling Constants (can be moved to scheduler.ts or config) ---
@@ -133,24 +137,17 @@ const server = new McpServer({
 
 // --- Resource, Tool, and Prompt definitions will go here later ---
 
-// Define the plan_and_schedule tool using the (name, paramsSchema, handler) signature
+// --- Tool Definition: plan_task (renamed from plan_and_schedule) ---
 server.tool(
-  'plan_and_schedule',
-  PlanAndScheduleInputSchema.shape,
+  'plan_task', // Renamed for clarity
+  PlanInputSchema.shape,
   async (
-    params, // Use inferred type for params
-    extra  // Use inferred type for extra
+    params,
+    extra
   ) => {
-    // Access params via params.taskDescription
-    const { taskDescription } = params as z.infer<typeof PlanAndScheduleInputSchema>; 
-    console.log(`Received plan_and_schedule request: ${taskDescription}`);
-    // Initial notification
+    const { taskDescription } = params as z.infer<typeof PlanInputSchema>;
+    console.log(`Received plan_task request: ${taskDescription}`);
     // extra.sendNotification('progress', { message: 'Starting task planning...' });
-
-    let subtasks: z.infer<typeof SubtaskListSchema> = [];
-    let documentUrl = '';
-    const scheduledEvents: { subtask: string; url: string | null }[] = [];
-    const unscheduledSubtasks: string[] = [];
 
     try {
       // 1. Call Gemini API and Validate Response
@@ -164,21 +161,70 @@ server.tool(
       if (!validationResult.success) {
         throw new Error(`LLM response structure is invalid: ${validationResult.error.message}`);
       }
-      subtasks = validationResult.data;
+      const subtasks = validationResult.data;
       console.log("Validated subtasks:", subtasks);
 
-      // 2. Authenticate with Google
+      // 2. Return the generated subtasks
+      // extra.sendNotification('progress', { message: 'Subtask planning complete.' });
+      return {
+        // Return subtasks as a JSON string within a text content block
+        content: [{ type: 'text', text: JSON.stringify(subtasks, null, 2) }], 
+      };
+
+    } catch (error: unknown) {
+      // extra.sendNotification('progress', { message: 'An error occurred during planning.', error: true });
+      console.error("Error during plan_task:", error);
+      let errorMessage = "Failed to generate subtasks.";
+      // ... (Keep refined error message generation, remove Docs/Calendar specific parts)
+      if (error instanceof SyntaxError) {
+        errorMessage = "Failed to parse LLM response (Invalid JSON).";
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+        if (error.message.startsWith('LLM')) {
+          errorMessage = `LLM Processing Error: ${error.message}`;
+        } else if (error.message.startsWith('Gemini API')) {
+          errorMessage = `Gemini API Error: ${error.message}`;
+        }
+      } else {
+        errorMessage = `An unknown error occurred: ${String(error)}`;
+      }
+      return {
+        content: [{ type: 'text', text: errorMessage }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Tool Definition: schedule_tasks ---
+server.tool(
+  'schedule_tasks',
+  ScheduleInputSchema.shape,
+  async (
+    params,
+    extra
+  ) => {
+    const { taskDescription, subtasks } = params as z.infer<typeof ScheduleInputSchema>;
+    console.log(`Received schedule_tasks request for: ${taskDescription}`);
+    // extra.sendNotification('progress', { message: 'Starting scheduling process...' });
+
+    let documentUrl = '';
+    const scheduledEvents: { subtask: string; url: string | null }[] = [];
+    const unscheduledSubtasks: string[] = [];
+
+    try {
+      // 1. Authenticate with Google (Moved from plan_task)
       // extra.sendNotification('progress', { message: 'Authenticating with Google...' });
       console.log("Attempting Google authentication...");
       const authClient = await authorize();
       console.log("Google authentication successful.");
 
-      // 3. Create Google Doc
+      // 2. Create Google Doc (Moved from plan_task)
       // extra.sendNotification('progress', { message: 'Creating Google Document...' });
       documentUrl = await createDocsWithSubtasks(taskDescription, subtasks, authClient);
       console.log(`Google Doc created: ${documentUrl}`);
 
-      // 4b. Dynamically register the created document as an MCP resource
+      // 3b. Dynamically register the created document as an MCP resource (Moved from plan_task)
       // extra.sendNotification('progress', { message: 'Registering document resource...' });
       try {
         server.resource(
@@ -195,10 +241,9 @@ server.tool(
         console.log(`Registered MCP resource for document: ${documentUrl}`);
       } catch (resourceError) {
          console.error(`Failed to register MCP resource for ${documentUrl}:`, resourceError);
-         // Non-fatal error, just log it and continue.
       }
 
-      // --- 5. Schedule Subtasks on Google Calendar ---
+      // 4. Schedule Subtasks on Google Calendar (Moved from plan_task)
       // extra.sendNotification('progress', { message: 'Querying calendar availability...' });
       console.log("Starting calendar scheduling...");
       const now = new Date();
@@ -210,7 +255,6 @@ server.tool(
       searchRangeEnd.setDate(searchRangeStart.getDate() + SCHEDULING_WINDOW_DAYS);
       searchRangeEnd.setHours(SCHEDULING_WORK_DAY_END_HOUR, 0, 0, 0);
 
-      // Get initial busy times
       const freeBusyResponse = await getFreeBusy(
         searchRangeStart.toISOString(),
         searchRangeEnd.toISOString(),
@@ -221,61 +265,48 @@ server.tool(
         start: new Date(b.start!),
         end: new Date(b.end!),
       })) || [];
-      console.log(`Found ${busyTimes.length} initial busy slots.`);
-
       let nextAvailableStartTime = new Date(searchRangeStart.getTime());
-
-      // extra.sendNotification('progress', { message: `Attempting to schedule ${subtasks.length} subtasks...` });
       let scheduledCount = 0;
-      for (const subtask of subtasks) {
-        console.log(`Attempting to schedule: ${subtask.subtask} (${subtask.duration_minutes} min)`);
-        const slot = findEarliestFitSlot(
-          nextAvailableStartTime,
-          subtask.duration_minutes,
-          busyTimes,
-          SCHEDULING_WORK_DAY_START_HOUR,
-          SCHEDULING_WORK_DAY_END_HOUR,
-          SCHEDULING_BUFFER_MINUTES,
-          searchRangeEnd
-        );
 
-        if (slot) {
-          console.log(`Found slot for '${subtask.subtask}': ${slot.start.toISOString()} - ${slot.end.toISOString()}`);
-          try {
-            const eventUrl = await createCalendarEvent(
-              subtask.subtask,
-              slot.start.toISOString(),
-              slot.end.toISOString(),
-              authClient
-            );
-            scheduledEvents.push({ subtask: subtask.subtask, url: eventUrl });
-            // Add the newly scheduled event + buffer to busyTimes for subsequent searches
-            const busySlotEnd = new Date(slot.end.getTime() + SCHEDULING_BUFFER_MINUTES * 60000);
-            busyTimes.push({ start: slot.start, end: busySlotEnd });
-            // Sort busyTimes by start time for potentially better performance in findEarliestFitSlot
-            busyTimes.sort((a, b) => a.start.getTime() - b.start.getTime()); 
-            // Set the start time for the next search right after the buffer
-            nextAvailableStartTime = busySlotEnd;
-            scheduledCount++;
-          } catch (calendarError) {
-            console.error(`Failed to create calendar event for '${subtask.subtask}':`, calendarError);
-            unscheduledSubtasks.push(`${subtask.subtask} (Calendar API error)`);
-             // Move search start slightly forward to avoid potential infinite loops on persistent API errors
-            nextAvailableStartTime.setMinutes(nextAvailableStartTime.getMinutes() + 1); 
-          }
-        } else {
-          console.log(`No suitable slot found for '${subtask.subtask}' within the search window.`);
-          unscheduledSubtasks.push(`${subtask.subtask} (No slot found)`);
-           // If a task can't be scheduled, maybe we stop or try later? For now, just mark and continue search for others.
-           // We keep nextAvailableStartTime as is, maybe the next shorter task fits.
-        }
+      for (const subtask of subtasks) {
+         const slot = findEarliestFitSlot(
+           nextAvailableStartTime,
+           subtask.duration_minutes,
+           busyTimes,
+           SCHEDULING_WORK_DAY_START_HOUR,
+           SCHEDULING_WORK_DAY_END_HOUR,
+           SCHEDULING_BUFFER_MINUTES,
+           searchRangeEnd
+         );
+         if (slot) {
+            try {
+               const eventUrl = await createCalendarEvent(
+                 subtask.subtask,
+                 slot.start.toISOString(),
+                 slot.end.toISOString(),
+                 authClient
+               );
+               scheduledEvents.push({ subtask: subtask.subtask, url: eventUrl });
+               const busySlotEnd = new Date(slot.end.getTime() + SCHEDULING_BUFFER_MINUTES * 60000);
+               busyTimes.push({ start: slot.start, end: busySlotEnd });
+               busyTimes.sort((a, b) => a.start.getTime() - b.start.getTime());
+               nextAvailableStartTime = busySlotEnd;
+               scheduledCount++;
+            } catch (calendarError) {
+               console.error(`Failed to create calendar event for '${subtask.subtask}':`, calendarError);
+               unscheduledSubtasks.push(`${subtask.subtask} (Calendar API error)`);
+               nextAvailableStartTime.setMinutes(nextAvailableStartTime.getMinutes() + 1);
+            }
+         } else {
+            console.log(`No suitable slot found for '${subtask.subtask}' within the search window.`);
+            unscheduledSubtasks.push(`${subtask.subtask} (No slot found)`);
+         }
       }
       // extra.sendNotification('progress', { message: `Finished scheduling attempt (${scheduledCount}/${subtasks.length} scheduled).` });
       console.log("Scheduling attempt finished.");
-      // --- End Scheduling Logic ---
 
-      // 6. Return final response
-      // extra.sendNotification('progress', { message: 'Task completed.' });
+      // 5. Return final response (Moved from plan_task)
+      // extra.sendNotification('progress', { message: 'Task scheduling complete.' });
       let successMessage = `Plan created: ${documentUrl}`;
       if (scheduledEvents.length > 0) {
         successMessage += `\nScheduled ${scheduledEvents.length} / ${subtasks.length} subtasks.`;
@@ -283,58 +314,47 @@ server.tool(
       if (unscheduledSubtasks.length > 0) {
         successMessage += `\nCould not schedule: ${unscheduledSubtasks.join(', ')}.`;
       }
-
       return {
         content: [{ type: 'text', text: successMessage }],
-        _meta: { subtasks, documentUrl, scheduledEvents, unscheduledSubtasks }
+        _meta: { documentUrl, scheduledEvents, unscheduledSubtasks }
       };
 
     } catch (error: unknown) {
-      // extra.sendNotification('progress', { message: 'An error occurred.', error: true });
-      console.error("Error during plan_and_schedule:", error);
-      let errorMessage = "An unexpected error occurred during planning and scheduling.";
-      let errorCode = -32000; // Default JSON-RPC Internal error code
+      // extra.sendNotification('progress', { message: 'An error occurred during scheduling.', error: true });
+      console.error("Error during schedule_tasks:", error);
+      // Keep the refined error handling, ensure it covers Auth, Docs, Calendar errors
+      let errorMessage = "Failed to schedule tasks.";
+      let errorCode = -32000; // Reuse error code logic if needed
 
-      // Check for specific error types
+      // Check for specific error types (Copy logic from previous step)
       if (error instanceof SyntaxError) {
-        errorMessage = "Failed to parse LLM response (Invalid JSON).";
-        errorCode = -32700; // Parse error
+        errorMessage = "Failed to parse LLM response (Invalid JSON)."; // Should not happen here, but include for completeness
+        errorCode = -32700;
       } else if (error instanceof Error) {
-        // General Error handling
         errorMessage = error.message;
-
         // Google API Errors (GaxiosError)
-        // Check if it looks like a GaxiosError (duck typing)
         if (typeof error === 'object' && error !== null && 'code' in error && 'message' in error && 'config' in error) {
-           const gaxiosError = error as any; // Cast for easier access (use with caution)
+           const gaxiosError = error as any;
            const httpStatusCode = parseInt(gaxiosError.code, 10);
-           
            if (httpStatusCode === 401 || httpStatusCode === 403 && gaxiosError.message.includes('invalid_grant')) {
-              errorMessage = `Google Authentication Error: Token might be invalid or expired. Please try again. If the problem persists, delete token.json and restart. (${gaxiosError.message})`;
-              // Potentially suggest deleting token.json more strongly or automatically?
+              errorMessage = `Google Authentication Error: Token might be invalid or expired. (${gaxiosError.message})`;
            } else if (httpStatusCode === 403) {
-              // Check for specific reasons like quotaExceeded or permissionDenied
               if (gaxiosError.message.includes('quotaExceeded') || gaxiosError.message.includes('User Rate Limit Exceeded')) {
                  errorMessage = `Google API Quota/Rate Limit Exceeded: Please wait and try again later. (${gaxiosError.message})`;
-                 errorCode = -32001; // Custom code for rate limit
               } else if (gaxiosError.message.includes('insufficient permissions')) {
-                 errorMessage = `Google API Permission Denied: Please ensure the application has the necessary permissions (Docs/Calendar). You may need to re-authenticate after deleting token.json. (${gaxiosError.message})`;
-                 errorCode = -32002; // Custom code for permission denied
+                 errorMessage = `Google API Permission Denied: Please ensure correct permissions. (${gaxiosError.message})`;
               } else {
                  errorMessage = `Google API Forbidden Error (403): ${gaxiosError.message}`;
               }
            } else if (httpStatusCode === 429) {
-              errorMessage = `Google API Rate Limit Exceeded (429): Too many requests. Please wait and try again later. (${gaxiosError.message})`;
-              errorCode = -32001; // Custom code for rate limit
+              errorMessage = `Google API Rate Limit Exceeded (429): ${gaxiosError.message}`;
            } else if (httpStatusCode >= 400 && httpStatusCode < 500) {
                errorMessage = `Google API Client Error (${httpStatusCode}): ${gaxiosError.message}`;
            } else if (httpStatusCode >= 500) {
-               errorMessage = `Google API Server Error (${httpStatusCode}): Please try again later. (${gaxiosError.message})`;
+               errorMessage = `Google API Server Error (${httpStatusCode}): ${gaxiosError.message}`;
            }
-           // You can extract more details from gaxiosError.errors if needed
         }
-        
-        // Specific messages set earlier for LLM/Auth/etc. might override the GaxiosError message if more specific
+        // Override with more specific internal errors if applicable
         if (error.message.startsWith('Failed to authenticate')) {
             errorMessage = `Google Authentication Error: ${error.message}`;
         } else if (error.message.startsWith('Failed to create/update Google Doc')) {
@@ -343,26 +363,15 @@ server.tool(
              errorMessage = `Google Calendar API Error (Free/Busy): ${error.message}`;
         } else if (error.message.startsWith('Failed to create calendar event')) {
           errorMessage = `Google Calendar API Error (Event): ${error.message}`;
-        } else if (error.message.startsWith('LLM')) {
-          errorMessage = `LLM Processing Error: ${error.message}`;
-        } else if (error.message.startsWith('Gemini API')) { // Catch Gemini specific errors
-          errorMessage = `Gemini API Error: ${error.message}`;
         }
-        // Retain the original generic error message if none of the above matched better
-
+        // Removed LLM/Gemini specific errors as they shouldn't occur in schedule_tasks
       } else {
-        // Handle non-Error objects thrown
-        errorMessage = `An unknown error occurred: ${String(error)}`;
+         errorMessage = `An unknown error occurred: ${String(error)}`;
       }
-
-      // Return MCP conformant error
-      // Note: MCP SDK might handle wrapping this into the JSON-RPC structure.
-      // We primarily focus on providing a clear text message and the isError flag.
-      // Returning specific codes might be useful but requires client-side handling.
+      // Ensure a valid return structure in case of error
       return {
         content: [{ type: 'text', text: errorMessage }],
         isError: true,
-        // _error_code: errorCode // Optional: Include if client needs specific codes
       };
     }
   }
